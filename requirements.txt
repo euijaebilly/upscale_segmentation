@@ -1,0 +1,6 @@
+torch
+torchvision
+Pillow
+configparser
+scikit-learn
+numpy
