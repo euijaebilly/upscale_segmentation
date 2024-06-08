@@ -20,7 +20,7 @@ This project contains implementations for image super-resolution using SRCNN and
 
 2. Place your DIV2K training data in the specified directories in `config.cfg`.
 
-3. Modify `config.cfg` to set your desired training parameters.
+3. Modify `config.cfg` to set your desired training parameters, including early stopping patience and checkpoint directory.
 
 4. Run the training script:
     ```bash
@@ -28,3 +28,5 @@ This project contains implementations for image super-resolution using SRCNN and
     ```
 
 5. Modify `config.cfg` to switch between SRCNN and U-Net models.
+
+6. Check the `checkpoints` directory for saved models every 5 epochs and the `output` directory for final output images.

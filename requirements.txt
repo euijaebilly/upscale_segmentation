@@ -1,6 +1,7 @@
 torch
 torchvision
 Pillow
-configparser
+matplotlib
 scikit-learn
-numpy
+pycocotools
+tqdm
