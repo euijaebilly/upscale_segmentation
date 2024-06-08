@@ -5,8 +5,9 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from dataset import CocoDataset
-from model import SRCNN, UNet
-from utils import train, validate
+from srcnn import SRCNN
+from unet import UNet
+from utils import train, validate, collate_fn
 from tqdm import tqdm
 
 # Load configuration
@@ -19,7 +20,7 @@ val_image_dir = config['val_image_dir']
 val_ann_file = config['val_ann_file']
 test_image_dir = config['test_image_dir']
 batch_size = config['batch_size']
-epochs = config['epochs']
+epochs = config['num_epochs']
 learning_rate = config['learning_rate']
 patience = config['patience']
 checkpoint_dir = config['checkpoint_dir']
@@ -31,6 +32,7 @@ os.makedirs(log_dir, exist_ok=True)
 
 # Data transformations
 transform = transforms.Compose([
+    transforms.Resize((256, 256)),  # 이미지 크기를 조정하여 메모리 사용을 줄임
     transforms.ToTensor(),
 ])
 
@@ -38,12 +40,13 @@ transform = transforms.Compose([
 train_dataset = CocoDataset(train_image_dir, train_ann_file, transform=transform)
 val_dataset = CocoDataset(val_image_dir, val_ann_file, transform=transform)
 
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
 
 # Initialize models
-srcnn = SRCNN()
-unet = UNet()
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+srcnn = SRCNN().to(device)
+unet = UNet().to(device)
 
 # Optimizers
 optimizer_srcnn = optim.Adam(srcnn.parameters(), lr=learning_rate)
@@ -57,10 +60,10 @@ for epoch in range(epochs):
     print(f"Epoch {epoch + 1}/{epochs}")
 
     # Train phase
-    train_loss = train(srcnn, unet, train_loader, optimizer_srcnn, optimizer_unet)
+    train_loss = train(srcnn, unet, train_loader, optimizer_srcnn, optimizer_unet, device)
 
     # Validate phase
-    val_loss = validate(srcnn, unet, val_loader)
+    val_loss = validate(srcnn, unet, val_loader, device)
 
     print(f"Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
 

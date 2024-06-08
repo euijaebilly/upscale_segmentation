@@ -1,16 +1,14 @@
 {
-    "data_dir": "dataset/coco/",
-    "annotation_dir": "dataset/coco/annotations",
-    "train_image_dir": "preprocessed_coco/train2017",
-    "train_ann_file": "preprocessed_coco/train2017/annotations.json",
-    "val_image_dir": "preprocessed_coco/val2017",
-    "val_ann_file": "preprocessed_coco/val2017/annotations.json",
-    "test_image_dir": "preprocessed_coco/test2017",
+    "train_image_dir": "dataset/coco/train2017",
+    "train_ann_file": "dataset/coco/annotations/instances_train2017.json",
+    "val_image_dir": "dataset/coco/val2017",
+    "val_ann_file": "dataset/coco/annotations/instances_val2017.json",
+    "test_image_dir": "dataset/coco/test2017",
     "checkpoint_dir": "checkpoints",
     "output_dir": "output",
-    "log_dir": "logs",
-    "epochs": 50,
-    "batch_size": 16,
-    "learning_rate": 0.0001,
-    "patience": 5
+    "batch_size": 4,
+    "num_epochs": 50,
+    "learning_rate": 0.001,
+    "patience": 5,
+    "log_dir": "logs"
 }
