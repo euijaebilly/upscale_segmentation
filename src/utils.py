@@ -38,13 +38,13 @@ def collate_fn(batch):
     return images, annotations
 
 
-
 def train(srcnn, unet, data_loader, optimizer_srcnn, optimizer_unet, device='cuda'):
     srcnn.train()
     unet.train()
     total_loss = 0
     for images, annotations in tqdm(data_loader, desc="Training"):
         images = images.to(device)
+        annotations = annotations.to(device)  # Ensure annotations are also moved to the same device
 
         optimizer_srcnn.zero_grad()
         restored_images = srcnn(images)
@@ -53,7 +53,12 @@ def train(srcnn, unet, data_loader, optimizer_srcnn, optimizer_unet, device='cud
         optimizer_unet.zero_grad()
         outputs = unet(restored_images)
 
+        # Ensure annotations have the same dimensions as outputs
+        annotations = F.interpolate(annotations.unsqueeze(1), size=outputs.shape[2:], mode='nearest').squeeze(1)
+
+        # Calculate loss
         loss = F.mse_loss(outputs, annotations)
+
         loss.backward()
         optimizer_srcnn.step()
         optimizer_unet.step()
@@ -70,10 +75,16 @@ def validate(srcnn, unet, data_loader, device='cuda'):
     with torch.no_grad():
         for images, annotations in tqdm(data_loader, desc="Validating"):
             images = images.to(device)
+            annotations = annotations.to(device)  # Ensure annotations are also moved to the same device
+
             restored_images = srcnn(images)
             restored_images = restored_images.to(device)
             outputs = unet(restored_images)
 
+            # Ensure annotations have the same dimensions as outputs
+            annotations = F.interpolate(annotations.unsqueeze(1), size=outputs.shape[2:], mode='nearest').squeeze(1)
+
+            # Calculate loss
             loss = F.mse_loss(outputs, annotations)
 
             total_loss += loss.item()
