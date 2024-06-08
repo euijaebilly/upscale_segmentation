@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 from tqdm import tqdm
+import torch.nn.functional as F
 
 def collate_fn(batch):
     images = [item['image'] for item in batch]
@@ -52,8 +53,7 @@ def train(srcnn, unet, data_loader, optimizer_srcnn, optimizer_unet, device='cud
         optimizer_unet.zero_grad()
         outputs = unet(restored_images)
 
-        # Assume a dummy loss calculation; replace with actual loss calculation
-        loss = torch.nn.functional.mse_loss(outputs, restored_images)  # Dummy loss
+        loss = F.mse_loss(outputs, annotations)
         loss.backward()
         optimizer_srcnn.step()
         optimizer_unet.step()
@@ -74,8 +74,7 @@ def validate(srcnn, unet, data_loader, device='cuda'):
             restored_images = restored_images.to(device)
             outputs = unet(restored_images)
 
-            # Assume a dummy loss calculation; replace with actual loss calculation
-            loss = torch.nn.functional.mse_loss(outputs, restored_images)  # Dummy loss
+            loss = F.mse_loss(outputs, annotations)
 
             total_loss += loss.item()
 
