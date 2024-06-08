@@ -1,133 +1,90 @@
 import os
 import json
 import torch
-import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import transforms
+from dataset import CocoDataset
+from model import SRCNN, UNet
+from utils import train, validate
 from tqdm import tqdm
 
-from dataset import CocoPreprocessedDataset
-from srcnn import SRCNN
-from unet import UNet
+# Load configuration
+with open('config.json') as config_file:
+    config = json.load(config_file)
 
+train_image_dir = config['train_image_dir']
+train_ann_file = config['train_ann_file']
+val_image_dir = config['val_image_dir']
+val_ann_file = config['val_ann_file']
+test_image_dir = config['test_image_dir']
+batch_size = config['batch_size']
+epochs = config['epochs']
+learning_rate = config['learning_rate']
+patience = config['patience']
+checkpoint_dir = config['checkpoint_dir']
+log_dir = config['log_dir']
 
-def train(config):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# Ensure directories exist
+os.makedirs(checkpoint_dir, exist_ok=True)
+os.makedirs(log_dir, exist_ok=True)
 
-    # Create datasets and dataloaders
-    transform = transforms.Compose([
-        transforms.ToTensor()
-    ])
+# Data transformations
+transform = transforms.Compose([
+    transforms.ToTensor(),
+])
 
-    train_dataset = CocoPreprocessedDataset(config["data_dir"], config["annotation_dir"], "train", transform)
-    val_dataset = CocoPreprocessedDataset(config["data_dir"], config["annotation_dir"], "val", transform)
-    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], shuffle=False, num_workers=4)
+# Load datasets
+train_dataset = CocoDataset(train_image_dir, train_ann_file, transform=transform)
+val_dataset = CocoDataset(val_image_dir, val_ann_file, transform=transform)
 
-    # Initialize models
-    srcnn = SRCNN().to(device)
-    unet = UNet().to(device)
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
-    # Define loss and optimizer
-    criterion = nn.MSELoss()
-    optimizer = optim.Adam(list(srcnn.parameters()) + list(unet.parameters()), lr=config["learning_rate"])
+# Initialize models
+srcnn = SRCNN()
+unet = UNet()
 
-    # Load checkpoint if specified
-    start_epoch = 0
-    if config.get("checkpoint"):
-        checkpoint = torch.load(config["checkpoint"])
-        srcnn.load_state_dict(checkpoint['srcnn_state_dict'])
-        unet.load_state_dict(checkpoint['unet_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        start_epoch = checkpoint['epoch'] + 1
+# Optimizers
+optimizer_srcnn = optim.Adam(srcnn.parameters(), lr=learning_rate)
+optimizer_unet = optim.Adam(unet.parameters(), lr=learning_rate)
 
-    best_val_loss = float('inf')
-    patience_counter = 0
+# Training loop with early stopping and checkpointing
+best_val_loss = float('inf')
+patience_counter = 0
 
-    # Training loop
-    for epoch in range(start_epoch, config["epochs"]):
-        srcnn.train()
-        unet.train()
-        epoch_loss = 0
-        for images, labels in tqdm(train_loader, desc=f'Epoch {epoch + 1}/{config["epochs"]}'):
-            images, labels = images.to(device), labels.to(device)
+for epoch in range(epochs):
+    print(f"Epoch {epoch + 1}/{epochs}")
 
-            optimizer.zero_grad()
+    # Train phase
+    train_loss = train(srcnn, unet, train_loader, optimizer_srcnn, optimizer_unet)
 
-            # SRCNN forward
-            outputs = srcnn(images)
+    # Validate phase
+    val_loss = validate(srcnn, unet, val_loader)
 
-            # U-Net forward
-            outputs = unet(outputs)
+    print(f"Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
 
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
+    # Checkpointing
+    if (epoch + 1) % 5 == 0:
+        checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_epoch_{epoch + 1}.pth")
+        torch.save({
+            'epoch': epoch + 1,
+            'srcnn_state_dict': srcnn.state_dict(),
+            'unet_state_dict': unet.state_dict(),
+            'optimizer_srcnn': optimizer_srcnn.state_dict(),
+            'optimizer_unet': optimizer_unet.state_dict(),
+            'train_loss': train_loss,
+            'val_loss': val_loss,
+        }, checkpoint_path)
+        print(f"Checkpoint saved to {checkpoint_path}")
 
-            epoch_loss += loss.item()
+    # Early stopping
+    if val_loss < best_val_loss:
+        best_val_loss = val_loss
+        patience_counter = 0
+    else:
+        patience_counter += 1
 
-        print(f'Epoch {epoch + 1}/{config["epochs"]}, Loss: {epoch_loss / len(train_loader)}')
-
-        # Validation step
-        srcnn.eval()
-        unet.eval()
-        val_loss = 0
-        with torch.no_grad():
-            for images, labels in val_loader:
-                images, labels = images.to(device), labels.to(device)
-                outputs = srcnn(images)
-                outputs = unet(outputs)
-                loss = criterion(outputs, labels)
-                val_loss += loss.item()
-
-        val_loss /= len(val_loader)
-        print(f'Validation Loss: {val_loss}')
-
-        # Check for improvement
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            patience_counter = 0
-            # Save best model
-            best_model_path = os.path.join(config["checkpoint_dir"], 'best_model.pth')
-            torch.save({
-                'epoch': epoch,
-                'srcnn_state_dict': srcnn.state_dict(),
-                'unet_state_dict': unet.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-            }, best_model_path)
-        else:
-            patience_counter += 1
-
-        # Save checkpoint every 5 epochs
-        if (epoch + 1) % 5 == 0:
-            checkpoint_path = os.path.join(config["checkpoint_dir"], f'checkpoint_epoch_{epoch + 1}.pth')
-            torch.save({
-                'epoch': epoch,
-                'srcnn_state_dict': srcnn.state_dict(),
-                'unet_state_dict': unet.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-            }, checkpoint_path)
-
-        # Early stopping
-        if patience_counter >= config["patience"]:
-            print(f'Early stopping at epoch {epoch + 1}')
-            break
-
-    # Save final model
-    final_model_path = os.path.join(config["checkpoint_dir"], 'final_model.pth')
-    torch.save({
-        'epoch': epoch,
-        'srcnn_state_dict': srcnn.state_dict(),
-        'unet_state_dict': unet.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-    }, final_model_path)
-
-
-if __name__ == "__main__":
-    config_path = "config.json"
-    with open(config_path, 'r') as f:
-        config = json.load(f)
-
-    os.makedirs(config["checkpoint_dir"], exist_ok=True)
-    train(config)
+    if patience_counter >= patience:
+        print("Early stopping triggered.")
+        break
