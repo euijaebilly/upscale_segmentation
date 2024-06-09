@@ -4,4 +4,4 @@
 # source path/to/your/virtualenv/bin/activate
 
 # 학습 스크립트 실행
-python3 src/train.py --data_dir dataset/ --checkpoint_dir checkpoints/
+python3 src/train.py --data_dir preprocessed_coco/ --checkpoint_dir checkpoints/

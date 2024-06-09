@@ -1,32 +1,54 @@
-# Image Super-Resolution and Segmentation with PyTorch
+# Image Super-Resolution and Segmentation
 
-This project contains implementations for image super-resolution using SRCNN and image segmentation using U-Net.
+This project performs image super-resolution and segmentation using SRCNN and U-Net models.
 
-## Structure
+## Setup
 
-- `src/main.py`: The main script for training the models.
-- `src/srcnn.py`: The SRCNN model definition.
-- `src/unet.py`: The U-Net model definition.
-- `src/data_loader.py`: Custom dataset loader.
-- `config.cfg`: Configuration file for training parameters.
-- `requirements.txt`: Python dependencies.
+1. Clone the repository:
+    ```bash
+    git clone https://github.com/your-repo/image-super-resolution-segmentation.git
+    cd image-super-resolution-segmentation
+    ```
 
-## Usage
-
-1. Install the required packages:
+2. Install the required packages:
     ```bash
     pip install -r requirements.txt
     ```
 
-2. Place your DIV2K training data in the specified directories in `config.cfg`.
+3. Prepare the dataset. Modify `config.json` to point to your COCO dataset paths.
 
-3. Modify `config.cfg` to set your desired training parameters, including early stopping patience and checkpoint directory.
-
-4. Run the training script:
+4. Run preprocessing to degrade images:
     ```bash
-    python src/main.py
+    python preprocess.py
     ```
 
-5. Modify `config.cfg` to switch between SRCNN and U-Net models.
+5. Train the models:
+    ```bash
+    python train.py
+    ```
 
-6. Check the `checkpoints` directory for saved models every 5 epochs and the `output` directory for final output images.
+6. Test the models:
+    ```bash
+    python test.py
+    ```
+
+## Configuration
+
+Modify the `config.json` file to set paths, hyperparameters, and other configurations.
+
+## Structure
+
+- `config.json`: Configuration file.
+- `requirements.txt`: List of required packages.
+- `preprocess.py`: Script to preprocess and degrade images.
+- `dataset.py`: Custom dataset class for loading COCO data.
+- `utils.py`: Utility functions for training and validation.
+- `srcnn.py`: SRCNN model definition.
+- `unet.py`: U-Net model definition.
+- `train.py`: Script to train the models.
+- `test.py`: Script to test the models and save results.
+- `README.md`: This file.
+
+## Results
+
+The results, including input, restored, and segmentation images, will be saved in the `results` directory after running `test.py`.

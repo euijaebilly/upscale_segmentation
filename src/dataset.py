@@ -36,11 +36,7 @@ class CocoDataset(Dataset):
 
         annotation = None
         if self.ann_file:
-            annotation = self._create_mask(anns, image.size(1), image.size(2))
-
-        # Debug: Check shapes
-        if annotation is None:
-            print(f"Image shape: {image.shape}, No Annotation")
+            annotation = self._create_mask(anns, image.shape[1], image.shape[2])
 
         return {'image': image, 'annotation': annotation}
 

@@ -1,93 +1,114 @@
 import os
 import json
 import torch
-import torch.optim as optim
+import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
-from torchvision import transforms
 from dataset import CocoDataset
 from srcnn import SRCNN
 from unet import UNet
-from utils import train, validate, collate_fn
-from tqdm import tqdm
+from utils import collate_fn, train, validate
+import matplotlib.pyplot as plt
 
 # Load configuration
-with open('config.json') as config_file:
-    config = json.load(config_file)
+with open('config.json') as f:
+    config = json.load(f)
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Directories and files
 train_image_dir = config['train_image_dir']
 train_ann_file = config['train_ann_file']
 val_image_dir = config['val_image_dir']
 val_ann_file = config['val_ann_file']
-test_image_dir = config['test_image_dir']
+checkpoint_dir = config['checkpoint_dir']
+os.makedirs(checkpoint_dir, exist_ok=True)
+
+# Hyperparameters
 batch_size = config['batch_size']
-epochs = config['num_epochs']
+num_epochs = config['num_epochs']
 learning_rate = config['learning_rate']
 patience = config['patience']
-checkpoint_dir = config['checkpoint_dir']
-log_dir = config['log_dir']
 
-# Ensure directories exist
-os.makedirs(checkpoint_dir, exist_ok=True)
-os.makedirs(log_dir, exist_ok=True)
-
-# Data transformations
-transform = transforms.Compose([
-    transforms.Resize((256, 256)),  # 이미지 크기를 조정하여 메모리 사용을 줄임
+# Dataset and DataLoader
+train_transform = transforms.Compose([
     transforms.ToTensor(),
+    transforms.Resize((256, 256)),
 ])
 
-# Load datasets
-train_dataset = CocoDataset(train_image_dir, train_ann_file, transform=transform)
-val_dataset = CocoDataset(val_image_dir, val_ann_file, transform=transform)
-
+train_dataset = CocoDataset(image_dir=train_image_dir, ann_file=train_ann_file, transform=train_transform)
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+
+val_dataset = CocoDataset(image_dir=val_image_dir, ann_file=val_ann_file, transform=train_transform)
 val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
 
-# Initialize models
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# Model
 srcnn = SRCNN().to(device)
 unet = UNet().to(device)
 
 # Optimizers
-optimizer_srcnn = optim.Adam(srcnn.parameters(), lr=learning_rate)
-optimizer_unet = optim.Adam(unet.parameters(), lr=learning_rate)
+optimizer_srcnn = torch.optim.Adam(srcnn.parameters(), lr=learning_rate)
+optimizer_unet = torch.optim.Adam(unet.parameters(), lr=learning_rate)
 
-# Training loop with early stopping and checkpointing
+# Loss and accuracy tracking
+train_losses = []
+val_losses = []
+train_accuracies = []
+val_accuracies = []
 best_val_loss = float('inf')
-patience_counter = 0
+early_stopping_counter = 0
 
-for epoch in range(epochs):
-    print(f"Epoch {epoch + 1}/{epochs}")
+for epoch in range(num_epochs):
+    print(f"Epoch {epoch+1}/{num_epochs}")
 
-    # Train phase
-    train_loss = train(srcnn, unet, train_loader, optimizer_srcnn, optimizer_unet, device)
+    # Training
+    train_loss = train(srcnn, unet, train_loader, optimizer_srcnn, optimizer_unet, device=device)
+    train_losses.append(train_loss)
+    print(f"Training Loss: {train_loss:.6f}")
 
-    # Validate phase
-    val_loss = validate(srcnn, unet, val_loader, device)
+    # Validation
+    val_loss = validate(srcnn, unet, val_loader, device=device)
+    val_losses.append(val_loss)
+    print(f"Validation Loss: {val_loss:.6f}")
 
-    print(f"Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
-
-    # Checkpointing
-    if (epoch + 1) % 5 == 0:
-        checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_epoch_{epoch + 1}.pth")
+    # Save checkpoint
+    if (epoch + 1) % 5 == 0 or val_loss < best_val_loss:
+        checkpoint_path = os.path.join(checkpoint_dir, f'checkpoint_epoch_{epoch+1}.pth')
         torch.save({
             'epoch': epoch + 1,
             'srcnn_state_dict': srcnn.state_dict(),
             'unet_state_dict': unet.state_dict(),
-            'optimizer_srcnn': optimizer_srcnn.state_dict(),
-            'optimizer_unet': optimizer_unet.state_dict(),
-            'train_loss': train_loss,
-            'val_loss': val_loss,
+            'optimizer_srcnn_state_dict': optimizer_srcnn.state_dict(),
+            'optimizer_unet_state_dict': optimizer_unet.state_dict(),
+            'val_loss': val_loss
         }, checkpoint_path)
-        print(f"Checkpoint saved to {checkpoint_path}")
+        print(f"Checkpoint saved at {checkpoint_path}")
 
     # Early stopping
     if val_loss < best_val_loss:
         best_val_loss = val_loss
-        patience_counter = 0
+        early_stopping_counter = 0
     else:
-        patience_counter += 1
+        early_stopping_counter += 1
 
-    if patience_counter >= patience:
-        print("Early stopping triggered.")
+    if early_stopping_counter >= patience:
+        print("Early stopping triggered")
         break
+
+# Save final model
+final_model_path = os.path.join(checkpoint_dir, 'best_model.pth')
+torch.save({
+    'srcnn_state_dict': srcnn.state_dict(),
+    'unet_state_dict': unet.state_dict()
+}, final_model_path)
+print(f"Final model saved at {final_model_path}")
+
+# Plot training and validation loss
+plt.figure()
+plt.plot(range(1, len(train_losses) + 1), train_losses, label='Training Loss')
+plt.plot(range(1, len(val_losses) + 1), val_losses, label='Validation Loss')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.title('Training and Validation Loss')
+plt.legend()
+plt.savefig(os.path.join(checkpoint_dir, 'loss_plot.png'))
+plt.show()
