@@ -1,77 +1,73 @@
-import os
-import json
 import torch
-import torchvision.transforms as transforms
-from torch.utils.data import DataLoader
-from dataset import CocoDataset
-from srcnn import SRCNN
-from unet import UNet
-from utils import collate_fn
-from PIL import Image
+import os
 import matplotlib.pyplot as plt
+from torchvision import transforms
+from dataset import CocoDataset
+from srcnn_unet import UNetSRCNN
+from utils import collate_fn, calculate_accuracy, calculate_f1, calculate_miou, calculate_pixel_accuracy, save_results
 
-# Load configuration
-with open('config.json') as f:
-    config = json.load(f)
-
+# 디바이스 설정
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Directories and files
-test_image_dir = config['test_image_dir']
-checkpoint_dir = config['checkpoint_dir']
+# 데이터 경로 설정
+image_dir = 'preprocessed_coco/val2017'
+ann_file = 'preprocessed_coco/instances_val2017.json'
 
-# Dataset and DataLoader
-test_transform = transforms.Compose([
-    transforms.ToTensor(),
+# 데이터 전처리
+transform = transforms.Compose([
     transforms.Resize((256, 256)),
+    transforms.ToTensor()
 ])
 
-test_dataset = CocoDataset(image_dir=test_image_dir, transform=test_transform)
-test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, collate_fn=collate_fn)
+# 데이터셋 및 데이터로더 설정
+dataset = CocoDataset(image_dir=image_dir, ann_file=ann_file, transform=transform)
+val_loader = torch.utils.data.DataLoader(dataset, batch_size=4, shuffle=False, collate_fn=collate_fn)
 
-# Load models
-srcnn = SRCNN().to(device)
-unet = UNet().to(device)
+# 모델 초기화
+model = UNetSRCNN().to(device)
 
-checkpoint_path = os.path.join(checkpoint_dir, 'best_model.pth')
-checkpoint = torch.load(checkpoint_path)
-srcnn.load_state_dict(checkpoint['srcnn_state_dict'])
-unet.load_state_dict(checkpoint['unet_state_dict'])
+# 체크포인트 로드
+checkpoint = torch.load('checkpoints/best.pth')
+model.load_state_dict(checkpoint['model_state_dict'])
 
-srcnn.eval()
-unet.eval()
+# 평가 모드 설정
+model.eval()
 
-# Test the models
-os.makedirs('results', exist_ok=True)
+total_accuracy = 0
+total_f1 = 0
+total_miou = 0
+total_pixel_accuracy = 0
+num_batches = 0
 
 with torch.no_grad():
-    for idx, (images, _) in enumerate(test_loader):
+    for images, annotations in val_loader:
         images = images.to(device)
-        restored_images = srcnn(images)
-        segmentation_outputs = unet(restored_images)
+        annotations = annotations.to(device)
 
-        # Save input, restored, and segmentation images
-        input_image = transforms.ToPILImage()(images[0].cpu())
-        restored_image = transforms.ToPILImage()(restored_images[0].cpu())
-        segmentation_image = transforms.ToPILImage()(segmentation_outputs[0].cpu().squeeze())
+        # 모델 출력
+        outputs = model(images)
 
-        input_image.save(f'results/input_image_{idx}.png')
-        restored_image.save(f'results/restored_image_{idx}.png')
-        segmentation_image.save(f'results/segmentation_image_{idx}.png')
+        # 정확도 계산
+        accuracy = calculate_accuracy(outputs, annotations)
+        f1 = calculate_f1(outputs, annotations)
+        miou = calculate_miou(outputs, annotations)
+        pixel_accuracy = calculate_pixel_accuracy(outputs, annotations)
 
-        # Plot images
-        fig, axs = plt.subplots(1, 3, figsize=(15, 5))
-        axs[0].imshow(input_image)
-        axs[0].set_title('Input Image')
-        axs[0].axis('off')
+        total_accuracy += accuracy
+        total_f1 += f1
+        total_miou += miou
+        total_pixel_accuracy += pixel_accuracy
+        num_batches += 1
 
-        axs[1].imshow(restored_image)
-        axs[1].set_title('Restored Image')
-        axs[1].axis('off')
+        # 결과 시각화 및 저장
+        save_results(images, outputs, num_batches)
 
-        axs[2].imshow(segmentation_image, cmap='gray')
-        axs[2].set_title('Segmentation Output')
-        axs[2].axis('off')
+average_accuracy = total_accuracy / num_batches
+average_f1 = total_f1 / num_batches
+average_miou = total_miou / num_batches
+average_pixel_accuracy = total_pixel_accuracy / num_batches
 
-        plt.savefig(f'results/comparison_{idx}.png')
-        plt.close()
+print(f'Validation Accuracy: {average_accuracy:.4f}')
+print(f'Validation F1 Score: {average_f1:.4f}')
+print(f'Validation mIoU: {average_miou:.4f}')
+print(f'Validation Pixel Accuracy: {average_pixel_accuracy:.4f}')

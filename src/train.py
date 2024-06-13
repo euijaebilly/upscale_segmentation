@@ -1,114 +1,97 @@
-import os
-import json
 import torch
-import torchvision.transforms as transforms
+import torch.optim as optim
+import json
+import os
 from torch.utils.data import DataLoader
 from dataset import CocoDataset
-from srcnn import SRCNN
-from unet import UNet
-from utils import collate_fn, train, validate
+from srcnn_unet import UNetSRCNN
+from utils import train_one_epoch, validate, collate_fn, save_checkpoint
+from torchvision import transforms
 import matplotlib.pyplot as plt
 
-# Load configuration
-with open('config.json') as f:
-    config = json.load(f)
+# 설정 파일 로드
+with open('config.json') as config_file:
+    config = json.load(config_file)
 
+# 디바이스 설정
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Directories and files
-train_image_dir = config['train_image_dir']
-train_ann_file = config['train_ann_file']
-val_image_dir = config['val_image_dir']
-val_ann_file = config['val_ann_file']
-checkpoint_dir = config['checkpoint_dir']
-os.makedirs(checkpoint_dir, exist_ok=True)
-
-# Hyperparameters
-batch_size = config['batch_size']
-num_epochs = config['num_epochs']
-learning_rate = config['learning_rate']
-patience = config['patience']
-
-# Dataset and DataLoader
-train_transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Resize((256, 256)),
+# 데이터 전처리
+transform = transforms.Compose([
+    transforms.ToTensor()
 ])
 
-train_dataset = CocoDataset(image_dir=train_image_dir, ann_file=train_ann_file, transform=train_transform)
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+# 데이터셋 및 데이터로더 설정
+train_dataset = CocoDataset(
+    image_dir=config['train_image_dir'],
+    ann_file=config['train_ann_file'],
+    transform=transform
+)
+val_dataset = CocoDataset(
+    image_dir=config['val_image_dir'],
+    ann_file=config['val_ann_file'],
+    transform=transform
+)
+train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True, collate_fn=collate_fn)
+val_loader = DataLoader(val_dataset, batch_size=config['batch_size'], shuffle=False, collate_fn=collate_fn)
 
-val_dataset = CocoDataset(image_dir=val_image_dir, ann_file=val_ann_file, transform=train_transform)
-val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+# 모델 초기화
+model = UNetSRCNN().to(device)
 
-# Model
-srcnn = SRCNN().to(device)
-unet = UNet().to(device)
+# 손실 함수 및 옵티마이저 설정
+optimizer = optim.Adam(model.parameters(), lr=config['learning_rate'])
+criterion_segmentation = torch.nn.BCELoss()
+criterion_sr = torch.nn.MSELoss()
 
-# Optimizers
-optimizer_srcnn = torch.optim.Adam(srcnn.parameters(), lr=learning_rate)
-optimizer_unet = torch.optim.Adam(unet.parameters(), lr=learning_rate)
-
-# Loss and accuracy tracking
+# 학습 및 검증
 train_losses = []
 val_losses = []
-train_accuracies = []
-val_accuracies = []
-best_val_loss = float('inf')
-early_stopping_counter = 0
+accuracies = []
+f1_scores = []
+mious = []
+pixel_accuracies = []
 
-for epoch in range(num_epochs):
-    print(f"Epoch {epoch+1}/{num_epochs}")
+best_iou = 0.0
 
-    # Training
-    train_loss = train(srcnn, unet, train_loader, optimizer_srcnn, optimizer_unet, device=device)
+for epoch in range(config['num_epochs']):
+    print(f"Epoch {epoch}/{config['num_epochs']}")
+
+    train_loss, train_accuracy, train_f1, train_miou, train_pixel_acc = train_one_epoch(
+        model, train_loader, optimizer, criterion_segmentation, criterion_sr, device)
+    val_loss, val_accuracy, val_f1, val_miou, val_pixel_acc = validate(
+        model, val_loader, criterion_segmentation, criterion_sr, device)
+
     train_losses.append(train_loss)
-    print(f"Training Loss: {train_loss:.6f}")
-
-    # Validation
-    val_loss = validate(srcnn, unet, val_loader, device=device)
     val_losses.append(val_loss)
-    print(f"Validation Loss: {val_loss:.6f}")
+    accuracies.append((train_accuracy, val_accuracy))
+    f1_scores.append((train_f1, val_f1))
+    mious.append((train_miou, val_miou))
+    pixel_accuracies.append((train_pixel_acc, val_pixel_acc))
 
-    # Save checkpoint
-    if (epoch + 1) % 5 == 0 or val_loss < best_val_loss:
-        checkpoint_path = os.path.join(checkpoint_dir, f'checkpoint_epoch_{epoch+1}.pth')
-        torch.save({
-            'epoch': epoch + 1,
-            'srcnn_state_dict': srcnn.state_dict(),
-            'unet_state_dict': unet.state_dict(),
-            'optimizer_srcnn_state_dict': optimizer_srcnn.state_dict(),
-            'optimizer_unet_state_dict': optimizer_unet.state_dict(),
-            'val_loss': val_loss
-        }, checkpoint_path)
-        print(f"Checkpoint saved at {checkpoint_path}")
+    if (epoch + 1) % config['save_interval'] == 0 or epoch == config['num_epochs'] - 1:
+        save_checkpoint(model, optimizer, epoch, train_loss, config['checkpoint_dir'], is_best=False)
 
-    # Early stopping
-    if val_loss < best_val_loss:
-        best_val_loss = val_loss
-        early_stopping_counter = 0
-    else:
-        early_stopping_counter += 1
+    if val_miou > best_iou:
+        best_iou = val_miou
+        save_checkpoint(model, optimizer, epoch, train_loss, config['checkpoint_dir'], is_best=True)
 
-    if early_stopping_counter >= patience:
-        print("Early stopping triggered")
-        break
+save_checkpoint(model, optimizer, config['num_epochs'],train_losses[config['num_epochs']-1], config['checkpoint_dir'], final=True)
 
-# Save final model
-final_model_path = os.path.join(checkpoint_dir, 'best_model.pth')
-torch.save({
-    'srcnn_state_dict': srcnn.state_dict(),
-    'unet_state_dict': unet.state_dict()
-}, final_model_path)
-print(f"Final model saved at {final_model_path}")
+# 성능 지표 그래프 저장
+def plot_metric(metric, metric_name, save_path):
+    plt.figure()
+    plt.plot(range(1, config['num_epochs'] + 1), [m[0] for m in metric], label='Train')
+    plt.plot(range(1, config['num_epochs'] + 1), [m[1] for m in metric], label='Validation')
+    plt.xlabel('Epoch')
+    plt.ylabel(metric_name)
+    plt.legend()
+    plt.title(f'{metric_name} over epochs')
+    plt.savefig(save_path)
+    plt.close()
 
-# Plot training and validation loss
-plt.figure()
-plt.plot(range(1, len(train_losses) + 1), train_losses, label='Training Loss')
-plt.plot(range(1, len(val_losses) + 1), val_losses, label='Validation Loss')
-plt.xlabel('Epoch')
-plt.ylabel('Loss')
-plt.title('Training and Validation Loss')
-plt.legend()
-plt.savefig(os.path.join(checkpoint_dir, 'loss_plot.png'))
-plt.show()
+
+plot_metric(train_losses, 'Loss', os.path.join(config['checkpoint_dir'], 'loss.png'))
+plot_metric(accuracies, 'Accuracy', os.path.join(config['checkpoint_dir'], 'accuracy.png'))
+plot_metric(f1_scores, 'F1 Score', os.path.join(config['checkpoint_dir'], 'f1_score.png'))
+plot_metric(mious, 'mIoU', os.path.join(config['checkpoint_dir'], 'miou.png'))
+plot_metric(pixel_accuracies, 'Pixel Accuracy', os.path.join(config['checkpoint_dir'], 'pixel_accuracy.png'))

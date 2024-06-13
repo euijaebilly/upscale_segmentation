@@ -1,50 +1,92 @@
 import os
+import numpy as np
 import torch
 from torch.utils.data import Dataset
-from PIL import Image
+from PIL import Image, ImageDraw
 from pycocotools.coco import COCO
 import torchvision.transforms as transforms
+import matplotlib.pyplot as plt
+
 
 class CocoDataset(Dataset):
-    def __init__(self, image_dir, ann_file=None, transform=None):
+    def __init__(self, image_dir, ann_file, transform=None, save_visualizations=False,
+                 visualization_dir='check_dataset'):
         self.image_dir = image_dir
+        self.coco = COCO(ann_file)
+        self.img_ids = self.coco.getImgIds()
         self.transform = transform
-        self.ann_file = ann_file
-        if ann_file:
-            self.coco = COCO(ann_file)
-            self.image_ids = list(self.coco.imgs.keys())
-        else:
-            self.image_ids = [os.path.splitext(f)[0] for f in os.listdir(image_dir) if os.path.isfile(os.path.join(image_dir, f))]
+        self.resize_transform = transforms.Resize((256, 256))
+        self.save_visualizations = save_visualizations
+        self.visualization_dir = visualization_dir
+
+        if save_visualizations:
+            os.makedirs(visualization_dir, exist_ok=True)
 
     def __len__(self):
-        return len(self.image_ids)
+        return len(self.img_ids)
 
     def __getitem__(self, idx):
-        image_id = self.image_ids[idx]
-        if self.ann_file:
-            ann_ids = self.coco.getAnnIds(imgIds=image_id)
-            anns = self.coco.loadAnns(ann_ids)
-            image_info = self.coco.loadImgs(image_id)[0]
-            path = image_info['file_name']
-        else:
-            path = image_id + '.jpg'
+        img_id = self.img_ids[idx]
+        img_info = self.coco.loadImgs(img_id)[0]
+        img_path = os.path.join(self.image_dir, img_info['file_name'])
 
-        image = Image.open(os.path.join(self.image_dir, path)).convert('RGB')
+        image = Image.open(img_path).convert("RGB")
 
-        if self.transform:
+        ann_ids = self.coco.getAnnIds(imgIds=img_id)
+        anns = self.coco.loadAnns(ann_ids)
+
+        annotation_mask = self.create_mask(anns, image.size)
+        annotation_mask = annotation_mask.convert("L")  # Convert to single channel for mask
+
+        if self.transform is not None:
             image = self.transform(image)
+        else:
+            image = transforms.ToTensor()(image)
 
-        annotation = None
-        if self.ann_file:
-            annotation = self._create_mask(anns, image.shape[1], image.shape[2])
+        image = self.resize_transform(image)
+        annotation_mask = self.resize_transform(annotation_mask)
+        annotation_mask = transforms.ToTensor()(annotation_mask)
 
-        return {'image': image, 'annotation': annotation}
+        # print(image.shape, annotation_mask.shape)
+        # Save visualization if enabled
+        if self.save_visualizations:
+            self.save_visualization(image, annotation_mask, img_info['file_name'])
 
-    def _create_mask(self, anns, target_height, target_width):
-        mask = torch.zeros((target_height, target_width), dtype=torch.uint8)
+        return image, annotation_mask
+
+    def create_mask(self, anns, image_size):
+        mask = Image.new('L', image_size, 0)
         for ann in anns:
-            m = self.coco.annToMask(ann)
-            m = torch.tensor(m, dtype=torch.uint8)
-            m = transforms.functional.resize(m.unsqueeze(0), (target_height, target_width)).squeeze(0)
-            mask = torch.max(mask, m)
+            if 'segmentation' in ann:
+                seg = ann['segmentation']
+                if isinstance(seg, list):  # polygon
+                    for poly in seg:
+                        poly = np.array(poly).reshape((len(poly) // 2, 2))
+                        ImageDraw.Draw(mask).polygon([tuple(p) for p in poly], outline=1, fill=1)
         return mask
+
+    def save_visualization(self, image, annotation_mask, file_name):
+        # Convert tensors to PIL images
+        if isinstance(image, torch.Tensor):
+            image = transforms.ToPILImage()(image)
+        if isinstance(annotation_mask, torch.Tensor):
+            annotation_mask = transforms.ToPILImage()(annotation_mask)
+
+        # Create a figure to display the images
+        fig, ax = plt.subplots(1, 2, figsize=(10, 5))
+
+        # Display the original image
+        ax[0].imshow(image)
+        ax[0].set_title("Image")
+        ax[0].axis("off")
+
+        # Display the annotation mask
+        ax[1].imshow(annotation_mask, cmap='gray')
+        ax[1].set_title("Annotation Mask")
+        ax[1].axis("off")
+
+        # Save the figure
+        visualization_path = os.path.join(self.visualization_dir, file_name.replace('.jpg', '_visualization.png'))
+        print(visualization_path)
+        plt.savefig(visualization_path)
+        plt.close(fig)
