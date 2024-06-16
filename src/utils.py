@@ -2,9 +2,8 @@ import torch
 import os
 import matplotlib.pyplot as plt
 import numpy as np
-from sklearn.metrics import f1_score, jaccard_score
+from sklearn.metrics import f1_score, jaccard_score, accuracy_score
 from tqdm import tqdm
-
 
 def collate_fn(batch):
     images, annotations = zip(*batch)
@@ -54,94 +53,71 @@ def calculate_pixel_accuracy(preds, labels):
 
 def train_one_epoch(model, data_loader, optimizer, criterion_segmentation, criterion_sr, device):
     model.train()
-
-    total_loss = 0
-    total_accuracy = 0
-    total_f1 = 0
-    total_miou = 0
-    total_pixel_accuracy = 0
-    num_batches = 0
+    running_loss = 0.0
+    all_outputs = []
+    all_annotations = []
 
     for images, annotations in tqdm(data_loader):
         images = images.to(device)
         annotations = annotations.to(device)
 
-        # 모델 출력
+        optimizer.zero_grad()
+
         outputs = model(images)
-        outputs = outputs.repeat(1, 3, 1, 1)
-
-        # print(outputs.shape,annotations.shape)
-
-        # 손실 계산
         loss_segmentation = criterion_segmentation(outputs, annotations)
         loss_sr = criterion_sr(outputs, images)
         loss = loss_segmentation + loss_sr
 
-        # 역전파 및 옵티마이저 스텝
-        optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-        total_loss += loss.item()
-        total_accuracy += calculate_accuracy(outputs, annotations)
-        total_f1 += calculate_f1(outputs, annotations)
-        total_miou += calculate_miou(outputs, annotations)
-        total_pixel_accuracy += calculate_pixel_accuracy(outputs, annotations)
-        num_batches += 1
+        running_loss += loss.item() * images.size(0)
+        all_outputs.append(outputs.detach().cpu().numpy())
+        all_annotations.append(annotations.detach().cpu().numpy())
 
-    average_loss = total_loss / num_batches
-    average_accuracy = total_accuracy / num_batches
-    average_f1 = total_f1 / num_batches
-    average_miou = total_miou / num_batches
-    average_pixel_accuracy = total_pixel_accuracy / num_batches
+    epoch_loss = running_loss / len(data_loader.dataset)
+    all_outputs = np.concatenate(all_outputs, axis=0)
+    all_annotations = np.concatenate(all_annotations, axis=0)
 
-    print(
-        f'Loss: {average_loss:.4f}, Accuracy: {average_accuracy:.4f}, F1: {average_f1:.4f}, mIoU: {average_miou:.4f}, Pixel Accuracy: {average_pixel_accuracy:.4f}')
+    thresholded_outputs = (all_outputs > 0.5).astype(np.uint8)
+    accuracy = accuracy_score(all_annotations.flatten(), thresholded_outputs.flatten())
+    f1 = f1_score(all_annotations.flatten(), thresholded_outputs.flatten(), average='binary')
+    miou = jaccard_score(all_annotations.flatten(), thresholded_outputs.flatten(), average='binary')
+    pixel_acc = (all_outputs.round() == all_annotations).mean()
 
-    return average_loss, average_accuracy, average_f1, average_miou, average_pixel_accuracy
-
+    return epoch_loss, accuracy, f1, miou, pixel_acc
 
 def validate(model, data_loader, criterion_segmentation, criterion_sr, device):
     model.eval()
-
-    total_loss = 0
-    total_accuracy = 0
-    total_f1 = 0
-    total_miou = 0
-    total_pixel_accuracy = 0
-    num_batches = 0
+    running_loss = 0.0
+    all_outputs = []
+    all_annotations = []
 
     with torch.no_grad():
-        for images, annotations in data_loader:
+        for images, annotations in tqdm(data_loader):
             images = images.to(device)
             annotations = annotations.to(device)
 
-            # 모델 출력
             outputs = model(images)
-            outputs = outputs.repeat(1, 3, 1, 1)
-
-            # 손실 계산
             loss_segmentation = criterion_segmentation(outputs, annotations)
             loss_sr = criterion_sr(outputs, images)
             loss = loss_segmentation + loss_sr
 
-            total_loss += loss.item()
-            total_accuracy += calculate_accuracy(outputs, annotations)
-            total_f1 += calculate_f1(outputs, annotations)
-            total_miou += calculate_miou(outputs, annotations)
-            total_pixel_accuracy += calculate_pixel_accuracy(outputs, annotations)
-            num_batches += 1
+            running_loss += loss.item() * images.size(0)
+            all_outputs.append(outputs.cpu().numpy())
+            all_annotations.append(annotations.cpu().numpy())
 
-    average_loss = total_loss / num_batches
-    average_accuracy = total_accuracy / num_batches
-    average_f1 = total_f1 / num_batches
-    average_miou = total_miou / num_batches
-    average_pixel_accuracy = total_pixel_accuracy / num_batches
+    epoch_loss = running_loss / len(data_loader.dataset)
+    all_outputs = np.concatenate(all_outputs, axis=0)
+    all_annotations = np.concatenate(all_annotations, axis=0)
 
-    print(
-        f'Validation Loss: {average_loss:.4f}, Accuracy: {average_accuracy:.4f}, F1: {average_f1:.4f}, mIoU: {average_miou:.4f}, Pixel Accuracy: {average_pixel_accuracy:.4f}')
+    thresholded_outputs = (all_outputs > 0.5).astype(np.uint8)
+    accuracy = accuracy_score(all_annotations.flatten(), thresholded_outputs.flatten())
+    f1 = f1_score(all_annotations.flatten(), thresholded_outputs.flatten(), average='binary')
+    miou = jaccard_score(all_annotations.flatten(), thresholded_outputs.flatten(), average='binary')
+    pixel_acc = (all_outputs.round() == all_annotations).mean()
 
-    return average_loss, average_accuracy, average_f1, average_miou, average_pixel_accuracy
+    return epoch_loss, accuracy, f1, miou, pixel_acc
 
 
 def save_results(images, outputs, batch_idx):

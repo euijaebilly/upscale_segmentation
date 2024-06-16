@@ -37,13 +37,9 @@ class CocoDataset(Dataset):
 
         annotation_mask = self.create_mask(anns, image.size)
         annotation_mask = annotation_mask.convert("L")  # Convert to single channel for mask
-
-        if self.transform is not None:
-            image = self.transform(image)
-        else:
-            image = transforms.ToTensor()(image)
-
         image = self.resize_transform(image)
+        image = transforms.ToTensor()(image)
+
         annotation_mask = self.resize_transform(annotation_mask)
         annotation_mask = transforms.ToTensor()(annotation_mask)
 
@@ -87,6 +83,6 @@ class CocoDataset(Dataset):
 
         # Save the figure
         visualization_path = os.path.join(self.visualization_dir, file_name.replace('.jpg', '_visualization.png'))
-        print(visualization_path)
+        # print(visualization_path)
         plt.savefig(visualization_path)
         plt.close(fig)

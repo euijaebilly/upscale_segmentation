@@ -75,7 +75,7 @@ for epoch in range(config['num_epochs']):
         best_iou = val_miou
         save_checkpoint(model, optimizer, epoch, train_loss, config['checkpoint_dir'], is_best=True)
 
-save_checkpoint(model, optimizer, config['num_epochs'],train_losses[config['num_epochs']-1], config['checkpoint_dir'], final=True)
+save_checkpoint(model, optimizer, config['num_epochs'], train_losses[config['num_epochs']-1], config['checkpoint_dir'], final=True)
 
 # 성능 지표 그래프 저장
 def plot_metric(metric, metric_name, save_path):
@@ -89,9 +89,8 @@ def plot_metric(metric, metric_name, save_path):
     plt.savefig(save_path)
     plt.close()
 
-
 plot_metric(train_losses, 'Loss', os.path.join(config['checkpoint_dir'], 'loss.png'))
 plot_metric(accuracies, 'Accuracy', os.path.join(config['checkpoint_dir'], 'accuracy.png'))
-plot_metric(f1_scores, 'F1 Score', os.path.join(config['checkpoint_dir'], 'f1_score.png'))
-plot_metric(mious, 'mIoU', os.path.join(config['checkpoint_dir'], 'miou.png'))
+plot_metric(f1_scores, 'F1 Score', os.path.join(config['checkpoint_dir'], 'f1.png'))
+plot_metric(mious, 'Mean IoU', os.path.join(config['checkpoint_dir'], 'miou.png'))
 plot_metric(pixel_accuracies, 'Pixel Accuracy', os.path.join(config['checkpoint_dir'], 'pixel_accuracy.png'))
