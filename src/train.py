@@ -5,9 +5,8 @@ import os
 from torch.utils.data import DataLoader
 from dataset import CocoDataset
 from srcnn_unet import UNetSRCNN
-from utils import train_one_epoch, validate, collate_fn, save_checkpoint
+from utils import train_one_epoch, validate, save_checkpoint, save_metrics, load_metrics, plot_metrics
 from torchvision import transforms
-import matplotlib.pyplot as plt
 
 # 설정 파일 로드
 with open('config.json') as config_file:
@@ -23,74 +22,82 @@ transform = transforms.Compose([
 
 # 데이터셋 및 데이터로더 설정
 train_dataset = CocoDataset(
-    image_dir=config['train_image_dir'],
+    origin_image_dir=config['origin_image_dir'],
+    data_image_dir=config['train_image_dir'],
     ann_file=config['train_ann_file'],
     transform=transform
 )
 val_dataset = CocoDataset(
-    image_dir=config['val_image_dir'],
+    origin_image_dir=config['origin_image_dir'],
+    data_image_dir=config['val_image_dir'],
     ann_file=config['val_ann_file'],
     transform=transform
 )
-train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True, collate_fn=collate_fn)
-val_loader = DataLoader(val_dataset, batch_size=config['batch_size'], shuffle=False, collate_fn=collate_fn)
+train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=config['batch_size'], shuffle=False)
 
 # 모델 초기화
-model = UNetSRCNN().to(device)
+model = UNetSRCNN(1).to(device)
 
 # 손실 함수 및 옵티마이저 설정
 optimizer = optim.Adam(model.parameters(), lr=config['learning_rate'])
 criterion_segmentation = torch.nn.BCELoss()
 criterion_sr = torch.nn.MSELoss()
 
-# 학습 및 검증
-train_losses = []
-val_losses = []
-accuracies = []
-f1_scores = []
-mious = []
-pixel_accuracies = []
+# 성능 지표 파일 설정
+metrics_filename = os.path.join(config['checkpoint_dir'], 'metrics.json')
+metrics = load_metrics(metrics_filename)
 
-best_iou = 0.0
+if not metrics:
+    metrics = {
+        'train_losses': [],
+        'val_losses': [],
+        'train_mious': [],
+        'val_mious': [],
+        'train_pixel_accuracies': [],
+        'val_pixel_accuracies': [],
+        'train_psrns': [],
+        'val_psrns': [],
+        'train_ssims': [],
+        'val_ssims': []
+    }
 
-for epoch in range(config['num_epochs']):
-    print(f"Epoch {epoch}/{config['num_epochs']}")
+best_accuracy = 0.0
 
-    train_loss, train_accuracy, train_f1, train_miou, train_pixel_acc = train_one_epoch(
+for epoch in range(len(metrics['train_losses']), config['num_epochs']):
+    print(f"Epoch {epoch + 1}/{config['num_epochs']}")
+
+    train_loss, train_miou, train_pixel_acc, train_psrn, train_ssim = train_one_epoch(
         model, train_loader, optimizer, criterion_segmentation, criterion_sr, device)
-    val_loss, val_accuracy, val_f1, val_miou, val_pixel_acc = validate(
+    val_loss, val_miou, val_pixel_acc, val_psrn, val_ssim = validate(
         model, val_loader, criterion_segmentation, criterion_sr, device)
 
-    train_losses.append(train_loss)
-    val_losses.append(val_loss)
-    accuracies.append((train_accuracy, val_accuracy))
-    f1_scores.append((train_f1, val_f1))
-    mious.append((train_miou, val_miou))
-    pixel_accuracies.append((train_pixel_acc, val_pixel_acc))
+    print(f"train loss: {train_loss:.4f},mIoU: {train_miou:.4f}, Pixel Accu: {train_pixel_acc:.4f}, psrn: {train_psrn:.4f}, ssim: {train_ssim:.4f}")
+    print(f"val loss: {val_loss:.4f},mIoU: {val_miou:.4f}, Pixel Accu: {val_pixel_acc:.4f}, psrn: {val_psrn:.4f}, ssim: {val_ssim:.4f}")
+
+    metrics['train_losses'].append(train_loss)
+    metrics['val_losses'].append(val_loss)
+    metrics['train_mious'].append(train_miou)
+    metrics['val_mious'].append(val_miou)
+    metrics['train_pixel_accuracies'].append(train_pixel_acc)
+    metrics['val_pixel_accuracies'].append(val_pixel_acc)
+    metrics['train_psrns'].append(train_psrn)
+    metrics['val_psrns'].append(val_psrn)
+    metrics['train_ssims'].append(train_ssim)
+    metrics['val_ssims'].append(val_ssim)
+
+    save_metrics(metrics, metrics_filename)
 
     if (epoch + 1) % config['save_interval'] == 0 or epoch == config['num_epochs'] - 1:
         save_checkpoint(model, optimizer, epoch, train_loss, config['checkpoint_dir'], is_best=False)
 
-    if val_miou > best_iou:
-        best_iou = val_miou
+    if train_pixel_acc > best_accuracy:
+        best_accuracy = train_pixel_acc
         save_checkpoint(model, optimizer, epoch, train_loss, config['checkpoint_dir'], is_best=True)
 
-save_checkpoint(model, optimizer, config['num_epochs'], train_losses[config['num_epochs']-1], config['checkpoint_dir'], final=True)
+save_checkpoint(model, optimizer, config['num_epochs'], metrics['train_losses'][-1], config['checkpoint_dir'], final=True)
 
 # 성능 지표 그래프 저장
-def plot_metric(metric, metric_name, save_path):
-    plt.figure()
-    plt.plot(range(1, config['num_epochs'] + 1), [m[0] for m in metric], label='Train')
-    plt.plot(range(1, config['num_epochs'] + 1), [m[1] for m in metric], label='Validation')
-    plt.xlabel('Epoch')
-    plt.ylabel(metric_name)
-    plt.legend()
-    plt.title(f'{metric_name} over epochs')
-    plt.savefig(save_path)
-    plt.close()
+plot_metrics(metrics, ['losses', 'mious', 'pixel_accuracies', 'psrns', 'ssims'], config['checkpoint_dir'])
 
-plot_metric(train_losses, 'Loss', os.path.join(config['checkpoint_dir'], 'loss.png'))
-plot_metric(accuracies, 'Accuracy', os.path.join(config['checkpoint_dir'], 'accuracy.png'))
-plot_metric(f1_scores, 'F1 Score', os.path.join(config['checkpoint_dir'], 'f1.png'))
-plot_metric(mious, 'Mean IoU', os.path.join(config['checkpoint_dir'], 'miou.png'))
-plot_metric(pixel_accuracies, 'Pixel Accuracy', os.path.join(config['checkpoint_dir'], 'pixel_accuracy.png'))
+

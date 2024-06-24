@@ -9,13 +9,14 @@ import matplotlib.pyplot as plt
 
 
 class CocoDataset(Dataset):
-    def __init__(self, image_dir, ann_file, transform=None, save_visualizations=False,
+    def __init__(self, origin_image_dir, data_image_dir, ann_file, transform=None, save_visualizations=False,
                  visualization_dir='check_dataset'):
-        self.image_dir = image_dir
+        self.origin_image_dir = origin_image_dir
+        self.data_image_dir = data_image_dir
         self.coco = COCO(ann_file)
         self.img_ids = self.coco.getImgIds()
         self.transform = transform
-        self.resize_transform = transforms.Resize((256, 256))
+        self.resize_transform = transforms.Resize((128, 128))
         self.save_visualizations = save_visualizations
         self.visualization_dir = visualization_dir
 
@@ -28,17 +29,21 @@ class CocoDataset(Dataset):
     def __getitem__(self, idx):
         img_id = self.img_ids[idx]
         img_info = self.coco.loadImgs(img_id)[0]
-        img_path = os.path.join(self.image_dir, img_info['file_name'])
+        origin_image_path = os.path.join(self.origin_image_dir, img_info['file_name'])
+        data_image_path = os.path.join(self.data_image_dir, img_info['file_name'])
 
-        image = Image.open(img_path).convert("RGB")
+        data_image = Image.open(data_image_path).convert("RGB")
+        origin_image = Image.open(origin_image_path).convert("RGB")
 
         ann_ids = self.coco.getAnnIds(imgIds=img_id)
         anns = self.coco.loadAnns(ann_ids)
 
-        annotation_mask = self.create_mask(anns, image.size)
+        annotation_mask = self.create_mask(anns, data_image.size)
         annotation_mask = annotation_mask.convert("L")  # Convert to single channel for mask
-        image = self.resize_transform(image)
-        image = transforms.ToTensor()(image)
+        data_image = self.resize_transform(data_image)
+        data_image = transforms.ToTensor()(data_image)
+        origin_image = self.resize_transform(origin_image)
+        origin_image = transforms.ToTensor()(origin_image)
 
         annotation_mask = self.resize_transform(annotation_mask)
         annotation_mask = transforms.ToTensor()(annotation_mask)
@@ -46,9 +51,9 @@ class CocoDataset(Dataset):
         # print(image.shape, annotation_mask.shape)
         # Save visualization if enabled
         if self.save_visualizations:
-            self.save_visualization(image, annotation_mask, img_info['file_name'])
+            self.save_visualization(data_image, annotation_mask, img_info['file_name'])
 
-        return image, annotation_mask
+        return origin_image, data_image, annotation_mask
 
     def create_mask(self, anns, image_size):
         mask = Image.new('L', image_size, 0)
