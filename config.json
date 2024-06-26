@@ -1,5 +1,6 @@
 {
-    "origin_image_dir": "dataset/coco/train2017",
+    "origin_train_dir": "dataset/coco/train2017",
+    "origin_val_dir": "dataset/coco/val2017",
     "train_image_dir": "preprocessed_coco1/train2017",
     "train_ann_file": "preprocessed_coco1/instances_train2017.json",
     "val_image_dir": "preprocessed_coco1/val2017",
@@ -9,6 +10,8 @@
     "output_dir": "output",
     "batch_size": 64,
     "num_epochs": 50,
+    "initial_learning_rate": 0.1,
+    "final_learning_rate": 0.0001,
     "learning_rate": 0.001,
     "patience": 5,
     "save_interval": 2,

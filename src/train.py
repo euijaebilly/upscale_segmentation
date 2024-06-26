@@ -22,13 +22,13 @@ transform = transforms.Compose([
 
 # 데이터셋 및 데이터로더 설정
 train_dataset = CocoDataset(
-    origin_image_dir=config['origin_image_dir'],
+    origin_image_dir=config['origin_train_dir'],
     data_image_dir=config['train_image_dir'],
     ann_file=config['train_ann_file'],
     transform=transform
 )
 val_dataset = CocoDataset(
-    origin_image_dir=config['origin_image_dir'],
+    origin_image_dir=config['origin_val_dir'],
     data_image_dir=config['val_image_dir'],
     ann_file=config['val_ann_file'],
     transform=transform
@@ -43,6 +43,7 @@ model = UNetSRCNN(1).to(device)
 optimizer = optim.Adam(model.parameters(), lr=config['learning_rate'])
 criterion_segmentation = torch.nn.BCELoss()
 criterion_sr = torch.nn.MSELoss()
+
 
 # 성능 지표 파일 설정
 metrics_filename = os.path.join(config['checkpoint_dir'], 'metrics.json')
